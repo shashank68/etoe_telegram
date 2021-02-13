@@ -1,21 +1,20 @@
-from telethon.utils import get_display_name
-from telethon.network import ConnectionTcpAbridged
-from telethon.errors import SessionPasswordNeededError
-from telethon import TelegramClient, events
-from getpass import getpass
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP
 from peewee import IntegerField, BlobField, SqliteDatabase, Model
+from getpass import getpass
+from telethon import TelegramClient, events
+from telethon.errors import SessionPasswordNeededError
+from telethon.network import ConnectionTcpAbridged
+from telethon.utils import get_display_name
 import asyncio
 import os
 import sys
 import time
-
 import base64
-from Crypto.Cipher import PKCS1_OAEP
-from Crypto.PublicKey import RSA
-
 import logging
 logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s',
                     level=logging.INFO)
+
 
 if len(sys.argv) > 1:
     db_file = str(sys.argv[1])
@@ -240,19 +239,20 @@ class InteractiveTelegramClient(TelegramClient):
 
                 # Send chat message (if any)
                 elif msg:
+                    # If the receivers public key is not present
+                    # Then send the _SEND_PUB_KEY txt to request for public key
+
                     print("SENDING MESSAGE TO ENTITTY: ", entity.id)
-                    # try:
-                    print("================================")
                     b64_enc_txt = '_SEND_PUB_KEY'
                     for dlg in Dialog.select():
                         if dlg.dialog_id == entity.id:
-                            cipher = PKCS1_OAEP.new(RSA.import_key(dlg.peer_pub_key))
+                            cipher = PKCS1_OAEP.new(
+                                RSA.import_key(dlg.peer_pub_key))
                             enc_msg_bytes = cipher.encrypt(msg.encode('utf-8'))
                             b64_enc_txt = base64.b64encode(
                                 enc_msg_bytes).decode('utf-8')
                             print("found public key!!")
                             break
-                    print("Sending", b64_enc_txt)
                     await self.send_message(entity, b64_enc_txt, link_preview=False)
 
     @staticmethod
@@ -273,18 +273,20 @@ class InteractiveTelegramClient(TelegramClient):
         # call, which can be expensive.
 
         if event.text == '_SEND_PUB_KEY':
+            # Request for public key
             my_pub_key_bytes = my_key.public_key().export_key()
             b64_enc_txt = "__REC_KEY" + \
                 base64.b64encode(my_pub_key_bytes).decode('utf-8')
             await event.reply(b64_enc_txt)
-            return
         elif len(event.text) > 9 and event.text[:9] == "__REC_KEY":
+            # Recieved a public key. Add to DB.
             print("RECIEVED PUBLIC KEY", event.text)
             b64_enc_text_bytes = event.text[9:].encode('utf-8')
             pub_bytes = base64.b64decode(b64_enc_text_bytes)
             peer = Dialog(dialog_id=event.sender_id, peer_pub_key=pub_bytes)
             peer.save(force_insert=True)
         else:
+            # Decrypt the msg and print.
             b64_enc_text_bytes = event.text.encode('utf-8')
             encr_msg_bytes = base64.b64decode(b64_enc_text_bytes)
             cipher = PKCS1_OAEP.new(my_key)
@@ -307,11 +309,13 @@ if __name__ == '__main__':
     SESSION = os.environ.get('TG_SESSION', 'interactive')
     API_ID = get_env('TG_API_ID', 'Enter your API ID: ', int)
     API_HASH = get_env('TG_API_HASH', 'Enter your API hash: ')
-
+    # my_key will be our private-public RSA key.
     try:
         with open('my_key.pem') as f:
             my_key = RSA.import_key(f.read())
     except FileNotFoundError:
+        # Limiting factor for lenght of messages.
+        # can msg length should be less than key lenght
         my_key = RSA.generate(1024)
         with open('my_key.pem', 'wb') as f:
             f.write(my_key.export_key('PEM'))
