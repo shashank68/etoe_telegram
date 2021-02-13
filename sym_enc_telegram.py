@@ -1,20 +1,24 @@
+import os
+import sys
+import logging
+
+# Crypto & encoding
+import base64
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
+
+# Database ORM
 from peewee import IntegerField, BlobField, SqliteDatabase, Model
+
+# Telethon
 from getpass import getpass
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
 from telethon.network import ConnectionTcpAbridged
 from telethon.utils import get_display_name
-import asyncio
-import os
-import sys
-import time
-import base64
-import logging
+
 logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s',
                     level=logging.INFO)
-
 
 if len(sys.argv) > 1:
     db_file = str(sys.argv[1])
@@ -89,7 +93,6 @@ def get_env(name, message, cast=str):
             return cast(value)
         except ValueError as e:
             print(e, file=sys.stderr)
-            time.sleep(1)
 
 
 class InteractiveTelegramClient(TelegramClient):
