@@ -1,13 +1,43 @@
-import asyncio
 import os
 import sys
-import time
-from getpass import getpass
+import logging
 
+# Crypto & encoding
+import base64
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP
+
+# Database ORM
+from peewee import IntegerField, BlobField, SqliteDatabase, Model
+
+# Telethon
+from getpass import getpass
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
 from telethon.network import ConnectionTcpAbridged
 from telethon.utils import get_display_name
+
+logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s',
+                    level=logging.INFO)
+
+if len(sys.argv) > 1:
+    db_file = str(sys.argv[1])
+else:
+    db_file = 'key_store.db'
+db = SqliteDatabase(db_file)
+
+
+class BaseModel(Model):
+    class Meta:
+        database = db
+
+
+class Dialog(BaseModel):
+    dialog_id = IntegerField(primary_key=True)
+    peer_pub_key = BlobField()
+
+
+db.create_tables([Dialog])
 
 # Create a global variable to hold the loop we will be using
 loop = asyncio.get_event_loop()
@@ -63,7 +93,6 @@ def get_env(name, message, cast=str):
             return cast(value)
         except ValueError as e:
             print(e, file=sys.stderr)
-            time.sleep(1)
 
 
 class InteractiveTelegramClient(TelegramClient):
@@ -72,7 +101,6 @@ class InteractiveTelegramClient(TelegramClient):
                  proxy=None):
 
         print_title('Initialization')
-
 
         # The first step is to initialize the TelegramClient, as we are
         # subclassing it, we need to call super().__init__(). On a more
@@ -132,8 +160,8 @@ class InteractiveTelegramClient(TelegramClient):
                     pw = getpass('Two step verification is enabled. '
                                  'Please enter your password: ')
 
-                    self_user =\
-                        loop.run_until_complete(self.sign_in(password=pw))
+                    self_user = loop.run_until_complete(
+                        self.sign_in(password=pw))
 
     async def run(self):
         """Main loop of the TelegramClient, will wait for user action"""
@@ -142,7 +170,8 @@ class InteractiveTelegramClient(TelegramClient):
         #
         # Events are an abstraction over Telegram's "Updates" and
         # are much easier to use.
-        self.add_event_handler(self.message_handler, events.NewMessage)
+        self.add_event_handler(self.message_handler,
+                               events.NewMessage(incoming=True))
 
         # Enter a while loop to chat as long as the user wants
         while True:
@@ -213,9 +242,21 @@ class InteractiveTelegramClient(TelegramClient):
 
                 # Send chat message (if any)
                 elif msg:
-                    await self.send_message(entity, msg, link_preview=False)
+                    # If the receivers public key is not present
+                    # Then send the _SEND_PUB_KEY txt to request for public key
 
-   
+                    print("SENDING MESSAGE TO ENTITTY: ", entity.id)
+                    b64_enc_txt = '_SEND_PUB_KEY'
+                    for dlg in Dialog.select():
+                        if dlg.dialog_id == entity.id:
+                            cipher = PKCS1_OAEP.new(
+                                RSA.import_key(dlg.peer_pub_key))
+                            enc_msg_bytes = cipher.encrypt(msg.encode('utf-8'))
+                            b64_enc_txt = base64.b64encode(
+                                enc_msg_bytes).decode('utf-8')
+                            print("found public key!!")
+                            break
+                    await self.send_message(entity, b64_enc_txt, link_preview=False)
 
     @staticmethod
     def print_progress(progress_type, downloaded_bytes, total_bytes):
@@ -233,22 +274,33 @@ class InteractiveTelegramClient(TelegramClient):
         # you should use ``get_chat()`` and ``get_sender()`` while working
         # with events. Since they are methods, you know they may make an API
         # call, which can be expensive.
-        chat = await event.get_chat()
-        if event.is_group:
-            if event.out:
-                sprint('>> sent "{}" to chat {}'.format(
-                    event.text, get_display_name(chat)
-                ))
-            else:
+
+        if event.text == '_SEND_PUB_KEY':
+            # Request for public key
+            my_pub_key_bytes = my_key.public_key().export_key()
+            b64_enc_txt = "__REC_KEY" + \
+                base64.b64encode(my_pub_key_bytes).decode('utf-8')
+            await event.reply(b64_enc_txt)
+        elif len(event.text) > 9 and event.text[:9] == "__REC_KEY":
+            # Recieved a public key. Add to DB.
+            print("RECIEVED PUBLIC KEY", event.text)
+            b64_enc_text_bytes = event.text[9:].encode('utf-8')
+            pub_bytes = base64.b64decode(b64_enc_text_bytes)
+            peer = Dialog(dialog_id=event.sender_id, peer_pub_key=pub_bytes)
+            peer.save(force_insert=True)
+        else:
+            # Decrypt the msg and print.
+            b64_enc_text_bytes = event.text.encode('utf-8')
+            encr_msg_bytes = base64.b64decode(b64_enc_text_bytes)
+            cipher = PKCS1_OAEP.new(my_key)
+            event.text = cipher.decrypt(encr_msg_bytes).decode('utf-8')
+
+            chat = await event.get_chat()
+            if event.is_group:
                 sprint('<< {} @ {} sent "{}"'.format(
                     get_display_name(await event.get_sender()),
                     get_display_name(chat),
                     event.text
-                ))
-        else:
-            if event.out:
-                sprint('>> "{}" to user {}'.format(
-                    event.text, get_display_name(chat)
                 ))
             else:
                 sprint('<< {} sent "{}"'.format(
@@ -260,5 +312,16 @@ if __name__ == '__main__':
     SESSION = os.environ.get('TG_SESSION', 'interactive')
     API_ID = get_env('TG_API_ID', 'Enter your API ID: ', int)
     API_HASH = get_env('TG_API_HASH', 'Enter your API hash: ')
+    # my_key will be our private-public RSA key.
+    try:
+        with open('my_key.pem') as f:
+            my_key = RSA.import_key(f.read())
+    except FileNotFoundError:
+        # Limiting factor for lenght of messages.
+        # can msg length should be less than key lenght
+        my_key = RSA.generate(1024)
+        with open('my_key.pem', 'wb') as f:
+            f.write(my_key.export_key('PEM'))
+
     client = InteractiveTelegramClient(SESSION, API_ID, API_HASH)
     loop.run_until_complete(client.run())
