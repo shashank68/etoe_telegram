@@ -4,11 +4,12 @@
 
 ```bash
 pip3 install -r requirements.txt
-python3 sym_enc_telegram.py
+python3 aes_telegram.py
 ```
 
 ## Working
 
-* RSA public key encryption/decryption
-* For sending a msg, we need the public key. (sends `_SEND_PUB_KEY`)
-* Decryption is done through private key.
+* Uses Elliptic Curve Diffie-Hellman for getting a shared key
+* Messages are encryted using AES
+* Initially, public key is uploaded to a [server](https://pub-keys.herokuapp.com/)
+* A client willing to chat will fetch this public public key
