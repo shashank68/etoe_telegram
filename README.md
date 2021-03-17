@@ -4,7 +4,7 @@
 
 ```bash
 pip3 install -r requirements.txt
-python3 sym_enc_telegram.py
+python3 aes_telegram.py
 ```
 
 ## Working
