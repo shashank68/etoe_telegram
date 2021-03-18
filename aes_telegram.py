@@ -8,7 +8,6 @@ import logging
 import asyncio
 import base64
 
-
 from secrets import token_bytes
 from getpass import getpass
 
@@ -26,9 +25,9 @@ from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
 from telethon.network import ConnectionTcpAbridged
 from telethon.utils import get_display_name
+from telethon.tl.types import Chat
 
 from utils import print_title, get_public_key, get_env, sprint, BUCKET_URL
-
 from db import Dialog, BLOBS_DIR
 
 
@@ -156,80 +155,48 @@ class InteractiveTelegramClient(TelegramClient):
 
                 # Send chat message (if any)
                 if msg:
-                    # If the receiver's aes key is not present,
-                    # fetch his public key from server and derive a aes key
+                    if type(entity) == Chat:
+                        # group chats
+                        async for person in self.iter_participants(entity):
+                            if not person.is_self:
+                                print("Generating encrypted msg(group) for", person.id)
+                                enc_msg_bytes = encrypt_msg(person.id, msg)
 
-                    print("SENDING MESSAGE TO ENTITTY: ", entity.id)
-                    aes_shared_key = None
-                    for dlg in Dialog.select():
-                        if dlg.dialog_id == entity.id:
-                            # found a entry of aes shared key.
-                            aes_shared_key = dlg.aes_shared_key
-                            break
+                                id_str = str(person.id)
+                                id_str = "0" * (20 - len(id_str)) + id_str
+                                # Append receivers id to msg (20 chars)
+                                enc_msg_bytes += id_str.encode("utf-8")
+                                b64_enc_txt = base64.b64encode(enc_msg_bytes).decode(
+                                    "utf-8"
+                                )
+                                await self.send_message(
+                                    entity, b64_enc_txt, link_preview=False
+                                )
+                    else:
+                        print("SENDING MESSAGE TO ENTITTY: ", entity.id)
 
-                    if aes_shared_key is None:
-                        # get the public key.
-                        peer_pub_key = get_public_key(entity.id)
-                        shared_key = my_ecdh_private_key.exchange(
-                            ec.ECDH(), peer_pub_key
-                        )
-                        aes_shared_key = HKDF(
-                            algorithm=hashes.SHA256(),
-                            length=32,
-                            salt=None,
-                            info=None,
-                            backend=default_backend(),
-                        ).derive(shared_key)
-                        peer = Dialog(
-                            dialog_id=entity.id, aes_shared_key=aes_shared_key
-                        )
-                        peer.save(force_insert=True)
-
-                    init_vector = token_bytes(16)
-                    aes = Cipher(
-                        algorithms.AES(aes_shared_key),
-                        modes.CBC(init_vector),
-                        backend=default_backend(),
-                    )
-                    encryptor = aes.encryptor()
-
-                    padder = padding.PKCS7(128).padder()
-                    padded_data = padder.update(msg.encode("utf-8")) + padder.finalize()
-                    enc_msg_bytes = encryptor.update(padded_data) + encryptor.finalize()
-                    enc_msg_bytes = init_vector + enc_msg_bytes
-                    b64_enc_txt = base64.b64encode(enc_msg_bytes).decode("utf-8")
-                    await self.send_message(entity, b64_enc_txt, link_preview=False)
+                        enc_msg_bytes = encrypt_msg(entity.id, msg)
+                        b64_enc_txt = base64.b64encode(enc_msg_bytes).decode("utf-8")
+                        await self.send_message(entity, b64_enc_txt, link_preview=False)
 
     async def message_handler(self, event):
         """Callback method for received events.NewMessage"""
 
         if event.text:
-            # check if the required aes key is present.
-            aes_shared_key = None
-            for dlg in Dialog.select():
-                if dlg.dialog_id == event.sender_id:
-                    # found a entry of aes key shared with receiver.
-                    aes_shared_key = dlg.aes_shared_key
-                    break
-
-            if aes_shared_key is None:
-                # get the public key.
-                peer_pub_key = get_public_key(event.sender_id)
-                shared_key = my_ecdh_private_key.exchange(ec.ECDH(), peer_pub_key)
-                aes_shared_key = HKDF(
-                    algorithm=hashes.SHA256(),
-                    length=32,
-                    salt=None,
-                    info=None,
-                    backend=default_backend(),
-                ).derive(shared_key)
-
-                peer = Dialog(dialog_id=event.sender_id, aes_shared_key=aes_shared_key)
-                peer.save(force_insert=True)
-
-            # Decrypt the msg and print.
             b64_enc_text_bytes = event.text.encode("utf-8")
             encr_msg_bytes = base64.b64decode(b64_enc_text_bytes)
+            sender_id = event.sender_id
+
+            if event.is_group:
+                receiver_id = encr_msg_bytes[-20:].decode("utf-8")
+                if int(receiver_id) is not int(MY_ENTITY_ID):
+                    # Not my message :(
+                    return
+                # Remove the received id
+                encr_msg_bytes = encr_msg_bytes[:-20]
+
+            aes_shared_key = get_aes_key(sender_id)
+
             init_vector = encr_msg_bytes[:16]
             aes = Cipher(
                 algorithms.AES(aes_shared_key),
@@ -237,7 +204,6 @@ class InteractiveTelegramClient(TelegramClient):
                 backend=default_backend(),
             )
             decryptor = aes.decryptor()
-
             temp_bytes = decryptor.update(encr_msg_bytes[16:]) + decryptor.finalize()
 
             unpadder = padding.PKCS7(128).unpadder()
@@ -245,6 +211,7 @@ class InteractiveTelegramClient(TelegramClient):
             event.text = temp_bytes.decode("utf-8")
 
             chat = await event.get_chat()
+
             if event.is_group:
                 sprint(
                     '<< {} @ {} sent "{}"'.format(
@@ -260,6 +227,50 @@ class InteractiveTelegramClient(TelegramClient):
 async def get_my_id(client):
     me = await client.get_me()
     return me.id
+
+
+def encrypt_msg(entity_id, msg):
+    aes_shared_key = get_aes_key(entity_id)
+    init_vector = token_bytes(16)
+    aes = Cipher(
+        algorithms.AES(aes_shared_key),
+        modes.CBC(init_vector),
+        backend=default_backend(),
+    )
+    encryptor = aes.encryptor()
+
+    padder = padding.PKCS7(128).padder()
+    padded_data = padder.update(msg.encode("utf-8")) + padder.finalize()
+    enc_msg_bytes = encryptor.update(padded_data) + encryptor.finalize()
+    enc_msg_bytes = init_vector + enc_msg_bytes
+
+    return enc_msg_bytes
+
+
+def get_aes_key(entity_id):
+    aes_shared_key = None
+    for dlg in Dialog.select():
+        if dlg.dialog_id == entity_id:
+            # found a entry of aes shared key.
+            aes_shared_key = dlg.aes_shared_key
+            break
+
+    if aes_shared_key is None:
+        # If the receiver's aes key is not present,
+        # fetch his public key from server and derive a aes key
+        peer_pub_key = get_public_key(entity_id)
+        shared_key = my_ecdh_private_key.exchange(ec.ECDH(), peer_pub_key)
+        aes_shared_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=None,
+            backend=default_backend(),
+        ).derive(shared_key)
+        peer = Dialog(dialog_id=entity_id, aes_shared_key=aes_shared_key)
+        peer.save(force_insert=True)
+
+    return aes_shared_key
 
 
 if __name__ == "__main__":
@@ -278,7 +289,7 @@ if __name__ == "__main__":
                 serialized_public_key
             )
     except FileNotFoundError:
-
+        print("Generting a new ecdh key pair!!")
         my_ecdh_private_key = ec.generate_private_key(ec.SECP384R1())
         my_ecdh_public_key = my_ecdh_private_key.public_key()
 
@@ -298,12 +309,15 @@ if __name__ == "__main__":
 
     client = InteractiveTelegramClient(SESSION, API_ID, API_HASH)
 
-    my_entity_id = str(loop.run_until_complete(get_my_id(client)))
+    MY_ENTITY_ID = str(loop.run_until_complete(get_my_id(client)))
 
-    r = requests.get(url=BUCKET_URL + my_entity_id)
+    with open("my_entity_ids.db", "w") as f:
+        f.write(MY_ENTITY_ID + "\n")
+    print("Checking if", MY_ENTITY_ID, "has a public key in server")
+    r = requests.get(url=BUCKET_URL + MY_ENTITY_ID)
     if r.status_code == 404:
-        print("Uploading public key to server!!")
+        print("No public key found. Uploading public key to server!!")
         data = {"pub_key": base64.b64encode(serialized_public_key).decode("utf-8")}
-        requests.post(url=BUCKET_URL + "update/" + my_entity_id, data=data)
+        requests.post(url=BUCKET_URL + "update/" + MY_ENTITY_ID, data=data)
 
     loop.run_until_complete(client.run())
