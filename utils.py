@@ -66,7 +66,7 @@ def get_public_key(telegram_id):
     telegram_id = str(telegram_id)
     r = requests.get(url=BUCKET_URL + telegram_id)
     if r.status_code == 404:
-        raise "Peer ECDH PUBLIC KEY NOT FOUND IN SERVER!!!"
+        return -1
     serialized_pub_key = b64decode(r.text.encode("utf-8"))
 
     return serialization.load_pem_public_key(serialized_pub_key)

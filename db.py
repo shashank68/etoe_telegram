@@ -1,9 +1,10 @@
 import os
 import sys
+from datetime import datetime, timezone
 
 
 # Database ORM
-from peewee import IntegerField, BlobField, SqliteDatabase, Model
+from peewee import IntegerField, BlobField, CharField, SqliteDatabase, Model
 
 BLOBS_DIR = "blobs/"
 
@@ -23,6 +24,7 @@ class BaseModel(Model):
 class Dialog(BaseModel):
     dialog_id = IntegerField(primary_key=True)
     aes_shared_key = BlobField()
+    creation_datetime = CharField()
 
 
 db.create_tables([Dialog])
