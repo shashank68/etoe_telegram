@@ -271,6 +271,7 @@ def get_aes_key(entity_id):
             if r.status_code != 200:
                 raise "Peer public key not found!!!"
             elif float(r.text) > float(dlg.creation_datetime):
+                print("Public key of", entity_id, "has been modified")
                 break
             else:
                 aes_shared_key = dlg.aes_shared_key
@@ -281,6 +282,7 @@ def get_aes_key(entity_id):
         # fetch his public key from server and derive a aes key
         peer_pub_key = get_public_key(entity_id)
         if type(peer_pub_key) == int and peer_pub_key == -1:
+            print("No pub key. No pain. no gain")
             return -1
         shared_key = my_ecdh_private_key.exchange(ec.ECDH(), peer_pub_key)
         aes_shared_key = HKDF(
@@ -295,6 +297,10 @@ def get_aes_key(entity_id):
             aes_shared_key=aes_shared_key,
             creation_datetime=datetime.utcnow().timestamp(),
         ).execute()
+
+        for dlg in Dialog.select():
+            if dlg.dialog_id == entity_id:
+                print("ok its there")
 
     return aes_shared_key
 
@@ -339,7 +345,9 @@ if __name__ == "__main__":
 
     print("Checking if", MY_ENTITY_ID, "has a public key in server")
     r = requests.get(url=BUCKET_URL + MY_ENTITY_ID)
-    if r.status_code == 404 or r.text != base64.b64encode(serialized_public_key).decode("utf-8"):
+    if r.status_code == 404 or r.text != base64.b64encode(serialized_public_key).decode(
+        "utf-8"
+    ):
         print(r.text)
         print(base64.b64encode(serialized_public_key).decode("utf-8"))
         print("Uploading public key to server!!")

@@ -66,7 +66,9 @@ def get_public_key(telegram_id):
     telegram_id = str(telegram_id)
     r = requests.get(url=BUCKET_URL + telegram_id)
     if r.status_code == 404:
+        print("Public key for", telegram_id, "not found")
         return -1
+    print("public received for", telegram_id, r.text)
     serialized_pub_key = b64decode(r.text.encode("utf-8"))
 
     return serialization.load_pem_public_key(serialized_pub_key)
