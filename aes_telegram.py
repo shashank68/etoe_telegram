@@ -10,7 +10,7 @@ import base64
 
 from secrets import token_bytes
 from getpass import getpass
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Crypto
 from cryptography.hazmat.primitives import hashes, serialization, padding
@@ -271,6 +271,9 @@ def get_aes_key(entity_id):
             if r.status_code != 200:
                 raise "Peer public key not found!!!"
             elif float(r.text) > float(dlg.creation_datetime):
+                print("date of pub key in server", float(r.text))
+                print("date of aes key in local", float(dlg.creation_datetime))
+                print("DIFF: ", float(r.text) - float(dlg.creation_datetime))
                 print("Public key of", entity_id, "has been modified")
                 break
             else:
@@ -292,15 +295,17 @@ def get_aes_key(entity_id):
             info=None,
             backend=default_backend(),
         ).derive(shared_key)
+        print("Aes key generated for", entity_id, aes_shared_key)
         Dialog.replace(
             dialog_id=entity_id,
             aes_shared_key=aes_shared_key,
-            creation_datetime=datetime.utcnow().timestamp(),
+            creation_datetime=datetime.now(timezone.utc).timestamp(),
         ).execute()
 
         for dlg in Dialog.select():
             if dlg.dialog_id == entity_id:
                 print("ok its there")
+                print(dlg.aes_shared_key)
 
     return aes_shared_key
 
