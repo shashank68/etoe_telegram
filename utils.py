@@ -1,9 +1,12 @@
 import os
 import sys
-from base64 import b64decode
 import requests
-
+import requests_cache
+from base64 import b64decode
 from cryptography.hazmat.primitives import serialization
+
+requests_cache.install_cache("pub_keys_cache.db", expire_after=180)
+
 
 BUCKET_URL = "https://pub-keys.herokuapp.com/"
 

@@ -1,3 +1,4 @@
 telethon
 peewee
 cryptography
+requests-cache

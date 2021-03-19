@@ -7,6 +7,8 @@ import sys
 import logging
 import asyncio
 import base64
+import requests
+import requests_cache
 
 from secrets import token_bytes
 from getpass import getpass
@@ -19,8 +21,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 
-import requests
-
 # Telethon
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
@@ -31,6 +31,8 @@ from telethon.tl.types import Chat
 from utils import print_title, get_public_key, get_env, sprint, BUCKET_URL
 from db import Dialog, BLOBS_DIR
 
+
+requests_cache.install_cache("http_requests_cache.db", expire_after=120)
 
 logging.basicConfig(
     format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s", level=logging.INFO
