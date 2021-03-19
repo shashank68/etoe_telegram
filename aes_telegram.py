@@ -156,7 +156,7 @@ class InteractiveTelegramClient(TelegramClient):
                 # Send chat message (if any)
                 if msg:
                     if type(entity) == Chat:
-                        # group chats
+                        # group chat
                         async for person in self.iter_participants(entity):
                             if not person.is_self:
                                 print("Generating encrypted msg(group) for", person.id)
@@ -173,6 +173,7 @@ class InteractiveTelegramClient(TelegramClient):
                                     entity, b64_enc_txt, link_preview=False
                                 )
                     else:
+                        # individual chat
                         print("SENDING MESSAGE TO ENTITTY: ", entity.id)
 
                         enc_msg_bytes = encrypt_msg(entity.id, msg)
@@ -186,10 +187,11 @@ class InteractiveTelegramClient(TelegramClient):
             b64_enc_text_bytes = event.text.encode("utf-8")
             encr_msg_bytes = base64.b64decode(b64_enc_text_bytes)
             sender_id = event.sender_id
-
+            print("Received a msg frm", sender_id)
             if event.is_group:
                 receiver_id = encr_msg_bytes[-20:].decode("utf-8")
-                if int(receiver_id) is not int(MY_ENTITY_ID):
+                print("Message intended for", int(receiver_id))
+                if int(receiver_id) != int(MY_ENTITY_ID):
                     # Not my message :(
                     return
                 # Remove the received id
