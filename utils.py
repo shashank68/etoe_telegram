@@ -5,7 +5,7 @@ import requests_cache
 from base64 import b64decode
 from cryptography.hazmat.primitives import serialization
 
-requests_cache.install_cache("pub_keys_cache.db", expire_after=180)
+requests_cache.install_cache("blobs/pub_keys_cache", expire_after=180)
 
 
 BUCKET_URL = "https://pub-keys.herokuapp.com/"
@@ -71,7 +71,6 @@ def get_public_key(telegram_id):
     if r.status_code == 404:
         print("Public key for", telegram_id, "not found")
         return -1
-    print("public received for", telegram_id, r.text)
     serialized_pub_key = b64decode(r.text.encode("utf-8"))
 
     return serialization.load_pem_public_key(serialized_pub_key)

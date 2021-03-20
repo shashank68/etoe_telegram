@@ -32,7 +32,7 @@ from utils import print_title, get_public_key, get_env, sprint, BUCKET_URL
 from db import Dialog, BLOBS_DIR
 
 
-requests_cache.install_cache("http_requests_cache.db", expire_after=120)
+requests_cache.install_cache("blobs/http_requests_cache", expire_after=120)
 
 logging.basicConfig(
     format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s", level=logging.INFO
@@ -162,7 +162,6 @@ class InteractiveTelegramClient(TelegramClient):
                         # group chat
                         async for person in self.iter_participants(entity):
                             if not person.is_self:
-                                print("Generating encrypted msg(group) for", person.id)
                                 enc_msg_bytes = encrypt_msg(person.id, msg)
                                 if enc_msg_bytes == -1:
                                     continue
@@ -179,9 +178,9 @@ class InteractiveTelegramClient(TelegramClient):
                                 )
                     else:
                         # individual chat
-                        print("SENDING MESSAGE TO ENTITTY: ", entity.id)
-
                         enc_msg_bytes = encrypt_msg(entity.id, msg)
+                        if enc_msg_bytes == -1:
+                            return
                         b64_enc_txt = base64.b64encode(enc_msg_bytes).decode("utf-8")
                         await self.send_message(entity, b64_enc_txt, link_preview=False)
 
@@ -189,14 +188,11 @@ class InteractiveTelegramClient(TelegramClient):
         """Callback method for received events.NewMessage"""
 
         if event.text:
-            print("event.text", event.text)
             b64_enc_text_bytes = event.text.encode("utf-8")
             encr_msg_bytes = base64.b64decode(b64_enc_text_bytes)
             sender_id = event.sender_id
-            print("Received a msg frm", sender_id)
             if event.is_group:
                 receiver_id = encr_msg_bytes[-20:].decode("utf-8")
-                print("Message intended for", int(receiver_id))
                 if int(receiver_id) != int(MY_ENTITY_ID):
                     # Not my message :(
                     return
@@ -206,17 +202,13 @@ class InteractiveTelegramClient(TelegramClient):
             aes_shared_key = get_aes_key(sender_id)
             print("Using aes key to decrypt", aes_shared_key)
             init_vector = encr_msg_bytes[:16]
-            print("Received init vector", init_vector)
             aes = Cipher(
                 algorithms.AES(aes_shared_key),
                 modes.CBC(init_vector),
                 backend=default_backend(),
             )
             decryptor = aes.decryptor()
-            print("Recived enc_msg_bytes", encr_msg_bytes[16:])
             temp_bytes = decryptor.update(encr_msg_bytes[16:]) + decryptor.finalize()
-            print("temp_bytes", temp_bytes)
-            print("len of temp_bytes", len(temp_bytes))
             unpadder = padding.PKCS7(128).unpadder()
             temp_bytes = unpadder.update(temp_bytes) + unpadder.finalize()
             event.text = temp_bytes.decode("utf-8")
@@ -246,7 +238,6 @@ def encrypt_msg(entity_id, msg):
         return -1
     print("Using aes key to encrypt", aes_shared_key)
     init_vector = token_bytes(16)
-    print("Encrypting with init_vector", init_vector)
     aes = Cipher(
         algorithms.AES(aes_shared_key),
         modes.CBC(init_vector),
@@ -256,9 +247,7 @@ def encrypt_msg(entity_id, msg):
 
     padder = padding.PKCS7(128).padder()
     padded_data = padder.update(msg.encode("utf-8")) + padder.finalize()
-    print("padded_data", padded_data, "\nlength", len(padded_data))
     enc_msg_bytes = encryptor.update(padded_data) + encryptor.finalize()
-    print("enc_msg_bytes are", enc_msg_bytes)
     enc_msg_bytes = init_vector + enc_msg_bytes
 
     return enc_msg_bytes
@@ -273,10 +262,7 @@ def get_aes_key(entity_id):
             if r.status_code != 200:
                 raise "Peer public key not found!!!"
             elif float(r.text) > float(dlg.creation_datetime):
-                print("date of pub key in server", float(r.text))
-                print("date of aes key in local", float(dlg.creation_datetime))
-                print("DIFF: ", float(r.text) - float(dlg.creation_datetime))
-                print("Public key of", entity_id, "has been modified")
+                # Public has been modified. Derive a new aes key
                 break
             else:
                 aes_shared_key = dlg.aes_shared_key
@@ -287,7 +273,6 @@ def get_aes_key(entity_id):
         # fetch his public key from server and derive a aes key
         peer_pub_key = get_public_key(entity_id)
         if type(peer_pub_key) == int and peer_pub_key == -1:
-            print("No pub key. No pain. no gain")
             return -1
         shared_key = my_ecdh_private_key.exchange(ec.ECDH(), peer_pub_key)
         aes_shared_key = HKDF(
@@ -297,18 +282,11 @@ def get_aes_key(entity_id):
             info=None,
             backend=default_backend(),
         ).derive(shared_key)
-        print("Aes key generated for", entity_id, aes_shared_key)
         Dialog.replace(
             dialog_id=entity_id,
             aes_shared_key=aes_shared_key,
             creation_datetime=datetime.now(timezone.utc).timestamp(),
         ).execute()
-
-        for dlg in Dialog.select():
-            if dlg.dialog_id == entity_id:
-                print("ok its there")
-                print(dlg.aes_shared_key)
-
     return aes_shared_key
 
 
@@ -350,13 +328,10 @@ if __name__ == "__main__":
 
     MY_ENTITY_ID = str(loop.run_until_complete(get_my_id(client)))
 
-    print("Checking if", MY_ENTITY_ID, "has a public key in server")
     r = requests.get(url=BUCKET_URL + MY_ENTITY_ID)
     if r.status_code == 404 or r.text != base64.b64encode(serialized_public_key).decode(
         "utf-8"
     ):
-        print(r.text)
-        print(base64.b64encode(serialized_public_key).decode("utf-8"))
         print("Uploading public key to server!!")
         data = {"pub_key": base64.b64encode(serialized_public_key).decode("utf-8")}
         requests.post(url=BUCKET_URL + "update/" + MY_ENTITY_ID, data=data)
