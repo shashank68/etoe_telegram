@@ -1,5 +1,4 @@
 telethon
 peewee
 cryptography
-requests-cache
-
+https://github.com/reclosedev/requests-cache/archive/master.zip

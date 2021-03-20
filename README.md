@@ -6,8 +6,8 @@ An end to end encryption layer on Telegram chats for individual and group conver
 
 ```bash
 
-pip3 install -r requirements.txt
-python3 aes_telegram.py
+pip3 install -r requirements.txt -U
+python3 telegram_client.py
 
 ```
 

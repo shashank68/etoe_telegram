@@ -1,12 +1,19 @@
+"""Helpers for telegram client"""
+
 import os
 import sys
+from base64 import b64decode
 import requests
 import requests_cache
-from base64 import b64decode
 from cryptography.hazmat.primitives import serialization
 
-requests_cache.install_cache("blobs/pub_keys_cache", expire_after=180)
-
+requests_cache.install_cache(
+    cache_name="blobs/pub_keys_cache",
+    allowable_codes=(
+        200,
+        404,
+    ),
+)
 
 BUCKET_URL = "https://pub-keys.herokuapp.com/"
 
@@ -30,18 +37,6 @@ def print_title(title):
     sprint("=={}==".format("=" * len(title)))
 
 
-def bytes_to_string(byte_count):
-    """Converts a byte count to a string (in KB, MB...)"""
-    suffix_index = 0
-    while byte_count >= 1024:
-        byte_count /= 1024
-        suffix_index += 1
-
-    return "{:.2f}{}".format(
-        byte_count, [" bytes", "KB", "MB", "GB", "TB"][suffix_index]
-    )
-
-
 def get_env(name, message, cast=str):
     """Helper to get environment variables interactively"""
     if name in os.environ:
@@ -50,27 +45,16 @@ def get_env(name, message, cast=str):
         value = input(message)
         try:
             return cast(value)
-        except ValueError as e:
-            print(e, file=sys.stderr)
-
-
-def print_progress(progress_type, downloaded_bytes, total_bytes):
-    print(
-        "{} {} out of {} ({:.2%})".format(
-            progress_type,
-            bytes_to_string(downloaded_bytes),
-            bytes_to_string(total_bytes),
-            downloaded_bytes / total_bytes,
-        )
-    )
+        except ValueError as err:
+            print(err, file=sys.stderr)
 
 
 def get_public_key(telegram_id):
+    """Fetch public key of the telegram entity"""
     telegram_id = str(telegram_id)
-    r = requests.get(url=BUCKET_URL + telegram_id)
-    if r.status_code == 404:
-        print("Public key for", telegram_id, "not found")
+    resp = requests.get(url=BUCKET_URL + telegram_id, expire_after=100)
+    if resp.status_code == 404:
         return -1
-    serialized_pub_key = b64decode(r.text.encode("utf-8"))
+    serialized_pub_key = b64decode(resp.text.encode("utf-8"))
 
     return serialization.load_pem_public_key(serialized_pub_key)

@@ -1,18 +1,14 @@
-"""
-End to end encryption layer for Telegram
-"""
+"""Telgram client with end to end encryption layer"""
 
 import os
 import sys
-import logging
 import asyncio
 import base64
-import requests
-import requests_cache
-
 from secrets import token_bytes
 from getpass import getpass
 from datetime import datetime, timezone
+import requests_cache
+import requests
 
 # Crypto
 from cryptography.hazmat.primitives import hashes, serialization, padding
@@ -28,18 +24,17 @@ from telethon.network import ConnectionTcpAbridged
 from telethon.utils import get_display_name
 from telethon.tl.types import Chat
 
-from utils import print_title, get_public_key, get_env, sprint, BUCKET_URL
+from helpers import print_title, get_public_key, get_env, sprint, BUCKET_URL
 from db import Dialog, BLOBS_DIR
 
-
-requests_cache.install_cache("blobs/http_requests_cache", expire_after=120)
-
-logging.basicConfig(
-    format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s", level=logging.INFO
+requests_cache.install_cache(
+    cache_name="blobs/http_requests_cache",
+    allowable_codes=(
+        200,
+        404,
+    ),
 )
 
-
-# Create a global variable to hold the loop we will be using
 loop = asyncio.get_event_loop()
 
 
@@ -54,6 +49,8 @@ async def async_input(prompt):
 
 
 class InteractiveTelegramClient(TelegramClient):
+    """Interactive end to end encrypted messaging"""
+
     def __init__(self, session_user_id, api_id, api_hash, proxy=None):
 
         print_title("Initialization")
@@ -88,12 +85,12 @@ class InteractiveTelegramClient(TelegramClient):
                     self_user = loop.run_until_complete(self.sign_in(code=code))
 
                 except SessionPasswordNeededError:
-                    pw = getpass(
+                    passwd = getpass(
                         "Two step verification is enabled. "
                         "Please enter your password: "
                     )
 
-                    self_user = loop.run_until_complete(self.sign_in(password=pw))
+                    self_user = loop.run_until_complete(self.sign_in(password=passwd))
 
     async def run(self):
         """Main loop of the TelegramClient, will wait for user action"""
@@ -103,7 +100,6 @@ class InteractiveTelegramClient(TelegramClient):
         # Enter a while loop to chat as long as the user wants
         while True:
             dialog_count = 15
-
             dialogs = await self.get_dialogs(limit=dialog_count)
 
             i = None
@@ -139,26 +135,20 @@ class InteractiveTelegramClient(TelegramClient):
             # Retrieve the selected user (or chat, or channel)
             entity = dialogs[i].entity
 
-            # Show some information
             print_title('Chat with "{}"'.format(get_display_name(entity)))
             print("Available commands:")
             print("  !q:  Quits the current chat.")
             print("  !Q:  Quits the current chat and exits.")
-
             print()
 
-            # And start a while loop to chat
             while True:
                 msg = await async_input("Enter a message: ")
-                # Quit
                 if msg == "!q":
                     break
                 if msg == "!Q":
                     return
-
-                # Send chat message (if any)
                 if msg:
-                    if type(entity) == Chat:
+                    if isinstance(entity, Chat):
                         # group chat
                         async for person in self.iter_participants(entity):
                             if not person.is_self:
@@ -200,7 +190,6 @@ class InteractiveTelegramClient(TelegramClient):
                 encr_msg_bytes = encr_msg_bytes[:-20]
 
             aes_shared_key = get_aes_key(sender_id)
-            print("Using aes key to decrypt", aes_shared_key)
             init_vector = encr_msg_bytes[:16]
             aes = Cipher(
                 algorithms.AES(aes_shared_key),
@@ -228,15 +217,16 @@ class InteractiveTelegramClient(TelegramClient):
 
 
 async def get_my_id(client):
-    me = await client.get_me()
-    return me.id
+    """Get my entity id"""
+    my_entity = await client.get_me()
+    return my_entity.id
 
 
 def encrypt_msg(entity_id, msg):
+    """Encrypts message with peer entity's aes key"""
     aes_shared_key = get_aes_key(entity_id)
     if aes_shared_key == -1:
         return -1
-    print("Using aes key to encrypt", aes_shared_key)
     init_vector = token_bytes(16)
     aes = Cipher(
         algorithms.AES(aes_shared_key),
@@ -254,25 +244,27 @@ def encrypt_msg(entity_id, msg):
 
 
 def get_aes_key(entity_id):
+    """Get the aes key of peer entity"""
     aes_shared_key = None
     for dlg in Dialog.select():
         if dlg.dialog_id == entity_id:
             # found a entry of aes shared key.
-            r = requests.get(url=BUCKET_URL + MY_ENTITY_ID + "/date")
-            if r.status_code != 200:
+            response_date = requests.get(
+                url=BUCKET_URL + MY_ENTITY_ID + "/date", expire_after=120
+            )
+            if response_date.status_code != 200:
                 raise "Peer public key not found!!!"
-            elif float(r.text) > float(dlg.creation_datetime):
-                # Public has been modified. Derive a new aes key
-                break
-            else:
+            if float(response_date.text) <= float(dlg.creation_datetime):
+                # Public has not been modified.
                 aes_shared_key = dlg.aes_shared_key
-                break
+            break
 
     if aes_shared_key is None:
         # If the receiver's aes key is not present,
         # fetch his public key from server and derive a aes key
         peer_pub_key = get_public_key(entity_id)
-        if type(peer_pub_key) == int and peer_pub_key == -1:
+        if isinstance(peer_pub_key, int):
+            print("Public key for ", entity_id, " not found", file=sys.stderr)
             return -1
         shared_key = my_ecdh_private_key.exchange(ec.ECDH(), peer_pub_key)
         aes_shared_key = HKDF(
@@ -327,13 +319,11 @@ if __name__ == "__main__":
     client = InteractiveTelegramClient(SESSION, API_ID, API_HASH)
 
     MY_ENTITY_ID = str(loop.run_until_complete(get_my_id(client)))
-
-    r = requests.get(url=BUCKET_URL + MY_ENTITY_ID)
-    if r.status_code == 404 or r.text != base64.b64encode(serialized_public_key).decode(
-        "utf-8"
-    ):
+    pub_key_text = base64.b64encode(serialized_public_key).decode("utf-8")
+    resp = requests.get(url=BUCKET_URL + MY_ENTITY_ID, expire_after=1)
+    if resp.status_code == 404 or resp.text != pub_key_text:
         print("Uploading public key to server!!")
-        data = {"pub_key": base64.b64encode(serialized_public_key).decode("utf-8")}
+        data = {"pub_key": pub_key_text}
         requests.post(url=BUCKET_URL + "update/" + MY_ENTITY_ID, data=data)
 
     loop.run_until_complete(client.run())
