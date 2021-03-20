@@ -2,7 +2,7 @@
 
 An end to end encryption layer on Telegram chats for individual and group conversations.
 
-## Running (After getting the api id & hash)
+## Usage (After getting the api id & hash)
 
 ```bash
 
