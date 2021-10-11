@@ -3,6 +3,7 @@
 import os
 import sys
 from base64 import b64decode
+
 import requests
 import requests_cache
 from cryptography.hazmat.primitives import serialization

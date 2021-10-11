@@ -1,31 +1,30 @@
 """Telgram client with end to end encryption layer"""
 
-import os
-import sys
 import asyncio
 import base64
-from secrets import token_bytes
-from getpass import getpass
+import os
+import sys
 from datetime import datetime, timezone
-import requests_cache
+from getpass import getpass
+from secrets import token_bytes
+
 import requests
-
-# Crypto
-from cryptography.hazmat.primitives import hashes, serialization, padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+import requests_cache
 from cryptography.hazmat.backends import default_backend
-
+# Crypto
+from cryptography.hazmat.primitives import hashes, padding, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 # Telethon
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
 from telethon.network import ConnectionTcpAbridged
-from telethon.utils import get_display_name
 from telethon.tl.types import Chat
+from telethon.utils import get_display_name
 
-from helpers import print_title, get_public_key, get_env, sprint, BUCKET_URL
-from db import Dialog, BLOBS_DIR
+from db import BLOBS_DIR, Dialog
+from helpers import BUCKET_URL, get_env, get_public_key, print_title, sprint
 
 requests_cache.install_cache(
     cache_name="blobs/http_requests_cache",

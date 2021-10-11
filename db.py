@@ -1,7 +1,8 @@
 """Database schema for AES keys storage"""
 
 import os
-from peewee import IntegerField, BlobField, CharField, SqliteDatabase, Model
+
+from peewee import BlobField, CharField, IntegerField, Model, SqliteDatabase
 
 BLOBS_DIR = "blobs/"
 
